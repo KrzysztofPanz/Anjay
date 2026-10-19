@@ -1,0 +1,87 @@
+// Copyright 2017-2024 AVSystem <avsystem@avsystem.com>
+// AVSystem Anjay LwM2M SDK
+// All rights reserved.
+//
+// Licensed under the AVSystem-5-clause License.
+// See the attached LICENSE file for details.
+
+// DRAFT Renode platform description for the CG095 board.
+//
+// The CG095 silicon is not identified yet, so this describes a generic
+// Arm Cortex-M33 laid out on the default Armv8-M system address map.
+// Everything marked TODO has to be checked against the real datasheet /
+// reference manual before relying on it:
+//   - flash and SRAM base addresses and sizes,
+//   - number of NVIC priority bits and the SysTick clock,
+//   - UART IP block, base addresses and IRQ numbers (PL011 is used here as a
+//     vendor-neutral placeholder; the firmware's UART driver must match the
+//     model, so swap it for the vendor's model, e.g. UART.STM32F7_USART or
+//     UART.NXP_LPUART, once the SoC is known),
+//   - whether the firmware runs with TrustZone (Secure + Non-secure images).
+//
+// Usage from the Renode monitor:
+//   (monitor) mach create "cg095"
+//   (monitor) machine LoadPlatformDescription @tools/renode/cg095.repl
+//   (monitor) showAnalyzer uart0
+//   (monitor) sysbus LoadELF @path/to/anjay_firmware.elf
+//   (monitor) start
+//
+// The vector table is guessed from the first loaded ELF section. If the image
+// keeps it elsewhere, set it explicitly before `start`, e.g.:
+//   (monitor) cpu VectorTableOffset 0x00000000
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    // TODO: 3 implemented priority bits assumed (0xE0); use 0xF0 for 4 bits
+    priorityMask: 0xE0
+    // TODO: frequency of the clock feeding SysTick (core clock unless
+    // CLKSOURCE selects the external reference)
+    systickFrequency: 64000000
+    IRQ -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m33"
+    nvic: nvic
+    // TODO: Cortex-M33 implements 0, 8 or 16 MPU regions per security state
+    numberOfMPURegions: 8
+    // TODO: enable when the firmware is split into Secure and Non-secure
+    // images (e.g. TF-M + Zephyr NS); the NS vector table can then be set
+    // with `cpu VectorTableOffsetNonSecure <addr>`.
+    // enableTrustZone: true
+    // numberOfSAURegions: 8
+
+// TODO: base and size of on-chip flash (code region, 0x00000000-0x1FFFFFFF)
+flash: Memory.MappedMemory @ sysbus 0x00000000
+    size: 0x100000
+
+// TODO: base and size of on-chip SRAM (SRAM region, 0x20000000-0x3FFFFFFF)
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x40000
+
+// Console / logs
+// TODO: base address, IRQ number and UART clock
+uart0: UART.PL011 @ sysbus 0x40000000
+    frequency: 24000000
+    -> nvic@0
+
+// Cellular modem link (see the optional modem below)
+// TODO: base address, IRQ number and UART clock
+uart1: UART.PL011 @ sysbus 0x40001000
+    frequency: 24000000
+    -> nvic@1
+
+// Optional: emulated cellular modem on uart1, so the LwM2M client has a
+// network path. Renode has no BG95 model; Quectel_BG96 speaks the same
+// QI* socket AT command set and is the closest available model.
+// Uncomment, or load it from a .resc with:
+//   machine LoadPlatformDescriptionFromString "modem: Network.Quectel_BG96 @ uart1"
+//   uart1.modem NetworkRegistrationState RegisteredHomeNetwork
+//
+// modem: Network.Quectel_BG96 @ uart1
+
+sysbus:
+    init:
+        // Silences "unhandled access" warnings for the debug blocks that
+        // firmware (e.g. Zephyr, CMSIS SystemInit) commonly pokes.
+        // TODO: replace with real models or drop once the SoC is known.
+        Tag <0xE0001000, 0xE0001FFF> "DWT"
+        Tag <0xE0002000, 0xE0002FFF> "FPB"
